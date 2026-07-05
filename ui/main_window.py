@@ -1,9 +1,15 @@
 from PySide6.QtWidgets import (
     QWidget,
-    QPushButton,
-    QLabel,
     QFileDialog,
+    QPushButton,
+    QLineEdit,
+    QLabel,
     QVBoxLayout,
+    QHBoxLayout,
+    QGroupBox,
+    QProgressBar,
+    QPlainTextEdit,
+    QCheckBox,
 )
 
 
@@ -12,89 +18,144 @@ class MainWindow(QWidget):
         super().__init__()
 
         self.setWindowTitle("Manga Recap Studio")
-        self.resize(700, 500)
+        self.resize(900, 650)
 
-        layout = QVBoxLayout()
+        self.build_ui()
 
-        self.audio_label = QLabel("🎤 Voiceover: Not selected")
-        self.audio_button = QPushButton("Select Voiceover")
+    def build_ui(self):
+        main_layout = QVBoxLayout()
 
-        self.script_label = QLabel("📄 Transcript: Not selected")
-        self.script_button = QPushButton("Select Transcript")
+        # -----------------------------
+        # Project Files
+        # -----------------------------
+        project_group = QGroupBox("Project")
 
-        self.images_label = QLabel("🖼 Images Folder: Not selected")
-        self.images_button = QPushButton("Select Images Folder")
+        project_layout = QVBoxLayout()
 
-        self.output_label = QLabel("📁 Output Folder: Not selected")
-        self.output_button = QPushButton("Select Output Folder")
+        self.audio_path = QLineEdit()
+        self.audio_path.setReadOnly(True)
 
-        self.generate_button = QPushButton("Generate Project")
+        audio_button = QPushButton("Browse")
 
-        layout.addWidget(self.audio_label)
-        layout.addWidget(self.audio_button)
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Voiceover"))
+        row.addWidget(self.audio_path)
+        row.addWidget(audio_button)
 
-        layout.addSpacing(10)
+        project_layout.addLayout(row)
 
-        layout.addWidget(self.script_label)
-        layout.addWidget(self.script_button)
+        self.images_path = QLineEdit()
+        self.images_path.setReadOnly(True)
 
-        layout.addSpacing(10)
+        images_button = QPushButton("Browse")
 
-        layout.addWidget(self.images_label)
-        layout.addWidget(self.images_button)
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Images"))
+        row.addWidget(self.images_path)
+        row.addWidget(images_button)
 
-        layout.addSpacing(10)
+        project_layout.addLayout(row)
 
-        layout.addWidget(self.output_label)
-        layout.addWidget(self.output_button)
+        self.output_path = QLineEdit()
+        self.output_path.setReadOnly(True)
 
-        layout.addSpacing(25)
+        output_button = QPushButton("Browse")
 
-        layout.addWidget(self.generate_button)
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Output"))
+        row.addWidget(self.output_path)
+        row.addWidget(output_button)
 
-        self.setLayout(layout)
+        project_layout.addLayout(row)
 
-        self.audio_button.clicked.connect(self.select_audio)
-        self.script_button.clicked.connect(self.select_script)
-        self.images_button.clicked.connect(self.select_images)
-        self.output_button.clicked.connect(self.select_output)
+        project_group.setLayout(project_layout)
+
+        # -----------------------------
+        # Options
+        # -----------------------------
+        options_group = QGroupBox("Options")
+
+        options_layout = QVBoxLayout()
+
+        self.smart_matching = QCheckBox("Smart Image Matching")
+        self.smart_matching.setChecked(True)
+
+        self.cache_results = QCheckBox("Cache Image Analysis")
+        self.cache_results.setChecked(True)
+
+        self.auto_detect = QCheckBox("Auto Detect Scenes")
+        self.auto_detect.setChecked(True)
+
+        options_layout.addWidget(self.smart_matching)
+        options_layout.addWidget(self.cache_results)
+        options_layout.addWidget(self.auto_detect)
+
+        options_group.setLayout(options_layout)
+
+        # -----------------------------
+        # Progress
+        # -----------------------------
+        self.status = QLabel("Ready")
+
+        self.progress = QProgressBar()
+        self.progress.setValue(0)
+
+        # -----------------------------
+        # Log
+        # -----------------------------
+        self.log = QPlainTextEdit()
+        self.log.setReadOnly(True)
+        self.log.appendPlainText("Application started.")
+
+        # -----------------------------
+        # Generate
+        # -----------------------------
+        self.generate = QPushButton("Generate Project")
+
+        main_layout.addWidget(project_group)
+        main_layout.addWidget(options_group)
+        main_layout.addWidget(self.status)
+        main_layout.addWidget(self.progress)
+        main_layout.addWidget(self.log)
+        main_layout.addWidget(self.generate)
+
+        self.setLayout(main_layout)
+
+        audio_button.clicked.connect(self.select_audio)
+        images_button.clicked.connect(self.select_images)
+        output_button.clicked.connect(self.select_output)
+
+    def log_message(self, text):
+        self.log.appendPlainText(text)
 
     def select_audio(self):
         file, _ = QFileDialog.getOpenFileName(
             self,
-            "Select Voiceover",
+            "Voiceover",
             "",
-            "Audio Files (*.mp3 *.wav *.m4a)"
+            "Audio (*.mp3 *.wav *.m4a)"
         )
 
         if file:
-            self.audio_label.setText(f"🎤 Voiceover: {file}")
-
-    def select_script(self):
-        file, _ = QFileDialog.getOpenFileName(
-            self,
-            "Select Transcript",
-            "",
-            "Text Files (*.txt)"
-        )
-
-        if file:
-            self.script_label.setText(f"📄 Transcript: {file}")
+            self.audio_path.setText(file)
+            self.log_message("Voiceover selected.")
 
     def select_images(self):
         folder = QFileDialog.getExistingDirectory(
             self,
-            "Select Images Folder"
+            "Images Folder"
         )
 
         if folder:
-            self.images_label.setText(f"🖼 Images Folder: {folder}")
+            self.images_path.setText(folder)
+            self.log_message("Images folder selected.")
 
     def select_output(self):
         folder = QFileDialog.getExistingDirectory(
             self,
-            "Select Output Folder"
+            "Output Folder"
         )
 
         if folder:
-            self.output_label.setText(f"📁 Output Folder: {folder}")
+            self.output_path.setText(folder)
+            self.log_message("Output folder selected.")
