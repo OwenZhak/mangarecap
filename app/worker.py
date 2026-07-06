@@ -1,414 +1,176 @@
-import re
-from difflib import SequenceMatcher
+from pathlib import Path
 
-from sentence_transformers import SentenceTransformer
-from sentence_transformers.util import cos_sim
+from PySide6.QtCore import QObject, Signal, Slot
+
+from ai.whisper_engine import WhisperEngine
+from ai.image_analyzer import ImageAnalyzer
+from timeline.timeline_builder import TimelineBuilder
+from timeline.segment import Segment
+from exporter.resolve_xml_exporter import ResolveXMLExporter
 
 
-class TimelineMatcher:
+class Worker(QObject):
 
-    def __init__(self, logger=None):
+    progress = Signal(int)
+    status = Signal(str)
+    log = Signal(str)
+    finished = Signal()
+    error = Signal(str)
 
-        self.logger = logger
+    def __init__(self):
 
-        self.model = SentenceTransformer(
-            "all-MiniLM-L6-v2"
-        )
+        super().__init__()
 
-        self.window_back = 2
+        self.audio = ""
+        self.images = ""
+        self.output = ""
 
-        self.window_forward = 4
+    @Slot()
+    def run(self):
 
-        self.used_counts = {}
+        try:
 
-    def as_text(self, value):
+            # ----------------------------------------
+            # Whisper
+            # ----------------------------------------
 
-        if value is None:
-            return ""
+            self.status.emit("Transcribing audio...")
 
-        if isinstance(value, str):
-            return value
+            whisper = WhisperEngine()
 
-        if isinstance(value, (int, float)):
-            return str(value)
-
-        if isinstance(value, list):
-
-            return " ".join(
-                self.as_text(item)
-                for item in value
+            transcript_data = whisper.transcribe(
+                self.audio,
+                None,
+                self.log.emit,
             )
 
-        if isinstance(value, dict):
-
-            return " ".join(
-                self.as_text(item)
-                for item in value.values()
+            whisper.save_json(
+                transcript_data,
+                "cache/transcript.json",
             )
 
-        return str(value)
-
-    def normalize(self, text):
-
-        text = text.lower()
-
-        text = re.sub(
-            r"[^a-z0-9\s']",
-            " ",
-            text,
-        )
-
-        text = re.sub(
-            r"\s+",
-            " ",
-            text,
-        ).strip()
-
-        return text
-
-    def words(self, text):
-
-        stop_words = {
-            "the",
-            "a",
-            "an",
-            "and",
-            "or",
-            "but",
-            "to",
-            "of",
-            "in",
-            "on",
-            "at",
-            "for",
-            "with",
-            "as",
-            "it",
-            "is",
-            "was",
-            "were",
-            "be",
-            "been",
-            "that",
-            "this",
-            "he",
-            "she",
-            "they",
-            "his",
-            "her",
-            "their",
-            "him",
-            "them",
-            "had",
-            "has",
-            "have",
-            "would",
-            "could",
-            "should",
-            "then",
-            "now",
-            "just",
-            "like",
-            "right",
-            "back",
-        }
-
-        cleaned = self.normalize(text)
-
-        result = []
-
-        for word in cleaned.split():
-
-            if word in stop_words:
-                continue
-
-            if len(word) <= 1:
-                continue
-
-            result.append(word)
-
-        return result
-
-    def image_text(self, image):
-
-        scene = image.get("scene", {}) or {}
-
-        parts = [
-            image.get("ocr", ""),
-            scene.get("summary", ""),
-            scene.get("possible_event", ""),
-            scene.get("visible_people", []),
-            scene.get("visible_actions", []),
-            scene.get("visible_objects", []),
-            scene.get("location", ""),
-            scene.get("emotion", ""),
-        ]
-
-        return "\n".join(
-            self.as_text(part)
-            for part in parts
-            if self.as_text(part).strip()
-        )
-
-    def semantic_similarity(
-        self,
-        transcript,
-        image,
-    ):
-
-        transcript_embedding = self.model.encode(
-            transcript,
-            convert_to_tensor=True,
-        )
-
-        image_embedding = self.model.encode(
-            self.image_text(image),
-            convert_to_tensor=True,
-        )
-
-        score = cos_sim(
-            transcript_embedding,
-            image_embedding,
-        )
-
-        return float(score)
-
-    def ocr_similarity(
-        self,
-        transcript,
-        image,
-    ):
-
-        ocr = image.get("ocr", "")
-
-        if not ocr:
-            return 0.0
-
-        transcript_clean = self.normalize(transcript)
-
-        ocr_clean = self.normalize(ocr)
-
-        if not transcript_clean or not ocr_clean:
-            return 0.0
-
-        sequence_score = SequenceMatcher(
-            None,
-            transcript_clean,
-            ocr_clean,
-        ).ratio()
-
-        transcript_words = self.words(transcript)
-
-        ocr_words = self.words(ocr)
-
-        if not transcript_words or not ocr_words:
-            return sequence_score
-
-        transcript_set = set(transcript_words)
-
-        ocr_set = set(ocr_words)
-
-        overlap = transcript_set.intersection(
-            ocr_set
-        )
-
-        short_length = max(
-            1,
-            min(
-                len(transcript_set),
-                len(ocr_set),
-            ),
-        )
-
-        overlap_score = len(overlap) / short_length
-
-        joined_transcript = " ".join(
-            transcript_words
-        )
-
-        joined_ocr = " ".join(
-            ocr_words
-        )
-
-        phrase_bonus = 0.0
-
-        if joined_transcript in joined_ocr:
-            phrase_bonus = 0.35
-
-        elif joined_ocr in joined_transcript:
-            phrase_bonus = 0.25
-
-        return min(
-            1.0,
-            max(sequence_score, overlap_score)
-            + phrase_bonus,
-        )
-
-    def position_bonus(
-        self,
-        index,
-        current_index,
-    ):
-
-        distance = abs(index - current_index)
-
-        if distance == 0:
-            return 0.08
-
-        if distance == 1:
-            return 0.06
-
-        if distance == 2:
-            return 0.03
-
-        return 0.0
-
-    def progress_bonus(
-        self,
-        index,
-        current_index,
-    ):
-
-        if index > current_index:
-            return 0.04
-
-        if index == current_index:
-            return 0.02
-
-        return -0.03
-
-    def usage_bonus(
-        self,
-        index,
-    ):
-
-        count = self.used_counts.get(
-            index,
-            0,
-        )
-
-        if count == 0:
-            return 0.06
-
-        if count == 1:
-            return 0.0
-
-        return -0.04 * count
-
-    def final_score(
-        self,
-        semantic,
-        ocr,
-        index,
-        current_index,
-    ):
-
-        score = 0.45 * semantic
-
-        score += 0.45 * ocr
-
-        score += self.position_bonus(
-            index,
-            current_index,
-        )
-
-        score += self.progress_bonus(
-            index,
-            current_index,
-        )
-
-        score += self.usage_bonus(
-            index,
-        )
-
-        if ocr >= 0.65:
-            score += 0.20
-
-        elif ocr >= 0.45:
-            score += 0.10
-
-        return score
-
-    def choose(
-        self,
-        transcript,
-        images,
-        current_index,
-    ):
-
-        if not images:
-            raise ValueError("No images to match.")
-
-        start = max(
-            0,
-            current_index - self.window_back,
-        )
-
-        end = min(
-            len(images),
-            current_index + self.window_forward + 1,
-        )
-
-        best_index = current_index
-
-        best_total = -999
-
-        best_semantic = 0.0
-
-        best_ocr = 0.0
-
-        for index in range(start, end):
-
-            semantic = self.semantic_similarity(
-                transcript,
-                images[index],
-            )
-
-            ocr = self.ocr_similarity(
-                transcript,
-                images[index],
-            )
-
-            total = self.final_score(
-                semantic,
-                ocr,
-                index,
-                current_index,
-            )
-
-            if self.logger:
-
-                self.logger(
-                    f"{images[index]['file']} -> "
-                    f"semantic {semantic:.3f}, "
-                    f"ocr {ocr:.3f}, "
-                    f"total {total:.3f}"
+            transcript = []
+
+            for item in transcript_data:
+
+                transcript.append(
+                    Segment(
+                        start=item["start"],
+                        end=item["end"],
+                        text=item["text"],
+                    )
                 )
 
-            if total > best_total:
+            # ----------------------------------------
+            # Images
+            # ----------------------------------------
 
-                best_total = total
+            self.status.emit("Preparing images...")
 
-                best_index = index
+            self.log.emit("--------------------------------")
+            self.log.emit("Scanning image folder...")
+            self.log.emit("")
 
-                best_semantic = semantic
+            image_extensions = {
+                ".png",
+                ".jpg",
+                ".jpeg",
+                ".webp",
+            }
 
-                best_ocr = ocr
-
-        self.used_counts[best_index] = (
-            self.used_counts.get(
-                best_index,
-                0,
+            images = sorted(
+                [
+                    file
+                    for file in Path(self.images).iterdir()
+                    if file.suffix.lower() in image_extensions
+                ],
+                key=lambda x: x.name.lower(),
             )
-            + 1
-        )
 
-        if self.logger:
-
-            self.logger(
-                f"Best detail: semantic {best_semantic:.3f}, "
-                f"ocr {best_ocr:.3f}, "
-                f"total {best_total:.3f}"
+            self.log.emit(
+                f"Found {len(images)} images."
             )
 
-        return best_index, best_total
+            self.log.emit("")
+            self.log.emit("Initializing AI...")
+
+            analyzer = ImageAnalyzer(
+                logger=self.log.emit
+            )
+
+            analyzed = []
+
+            total = len(images)
+
+            for index, image in enumerate(images):
+
+                self.status.emit(
+                    f"Analyzing {index + 1}/{total}"
+                )
+
+                self.log.emit("")
+                self.log.emit("=" * 70)
+                self.log.emit(
+                    f"Image {index + 1}/{total}"
+                )
+
+                analyzed.append(
+                    analyzer.analyze(image)
+                )
+
+                if total > 0:
+
+                    self.progress.emit(
+                        int(
+                            ((index + 1) / total) * 70
+                        )
+                    )
+
+            # ----------------------------------------
+            # Timeline
+            # ----------------------------------------
+
+            self.log.emit("")
+            self.log.emit("=" * 70)
+            self.log.emit("Building Timeline")
+            self.log.emit("=" * 70)
+
+            builder = TimelineBuilder(
+                logger=self.log.emit
+            )
+
+            builder.build(
+                transcript,
+                analyzed,
+            )
+
+            # ----------------------------------------
+            # Export Resolve XML
+            # ----------------------------------------
+
+            self.log.emit("")
+            self.log.emit("=" * 70)
+            self.log.emit("Exporting Resolve XML")
+            self.log.emit("=" * 70)
+
+            exporter = ResolveXMLExporter(
+                logger=self.log.emit
+            )
+
+            exporter.export(
+                audio_path=self.audio,
+                timeline_path="output/timeline.json",
+                output_path="output/project.xml",
+            )
+
+            self.progress.emit(100)
+
+            self.status.emit("Finished")
+
+            self.finished.emit()
+
+        except Exception as e:
+
+            self.error.emit(
+                str(e)
+            )

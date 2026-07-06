@@ -6,7 +6,10 @@ from xml.sax.saxutils import escape
 
 class ResolveXMLExporter:
 
-    def __init__(self, logger=None):
+    def __init__(
+        self,
+        logger=None,
+    ):
 
         self.logger = logger
 
@@ -16,15 +19,31 @@ class ResolveXMLExporter:
 
         self.height = 1920
 
-    def seconds_to_frames(self, seconds):
+    # --------------------------------------------------
+    # Helpers
+    # --------------------------------------------------
 
-        return int(round(float(seconds) * self.fps))
+    def seconds_to_frames(
+        self,
+        seconds,
+    ):
 
-    def path_url(self, path):
+        return int(
+            round(
+                float(seconds) * self.fps
+            )
+        )
+
+    def path_url(
+        self,
+        path,
+    ):
 
         return Path(path).resolve().as_uri()
 
-    def rate_xml(self):
+    def rate_xml(
+        self,
+    ):
 
         return f"""
                     <rate>
@@ -32,7 +51,10 @@ class ResolveXMLExporter:
                         <ntsc>FALSE</ntsc>
                     </rate>"""
 
-    def letter_name(self, index):
+    def letter_name(
+        self,
+        index,
+    ):
 
         letters = "abcdefghijklmnopqrstuvwxyz"
 
@@ -44,48 +66,57 @@ class ResolveXMLExporter:
 
             index -= 1
 
-            name = letters[index % 26] + name
+            name = letters[
+                index % 26
+            ] + name
 
             index //= 26
 
-        return name.rjust(4, "a")
-
-    def copy_image_to_media_folder(
-        self,
-        source_path,
-        media_folder,
-        index,
-    ):
-
-        source_path = Path(source_path).resolve()
-
-        extension = source_path.suffix.lower()
-
-        safe_letters = self.letter_name(index)
-
-        safe_name = f"manga_{safe_letters}{extension}"
-
-        target_path = media_folder / safe_name
-
-        shutil.copy2(
-            source_path,
-            target_path,
+        return name.rjust(
+            4,
+            "a",
         )
 
-        return target_path
+    # --------------------------------------------------
+    # Media copy
+    # --------------------------------------------------
 
-    def prepare_video_clips(
+    def prepare_media_folder(
+        self,
+        output_file,
+    ):
+
+        media_folder = output_file.parent / "media"
+
+        if media_folder.exists():
+
+            shutil.rmtree(
+                media_folder
+            )
+
+        media_folder.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        return media_folder
+
+    def build_media_map(
         self,
         timeline,
         media_folder,
-        total_frames,
+        output_folder,
     ):
 
-        prepared = []
+        source_to_safe = {}
 
-        for index, clip in enumerate(timeline):
+        media_map_log = []
 
-            source_image_path = clip.get("image_path")
+        for clip in timeline:
+
+            source_image_path = clip.get(
+                "image_path"
+            )
 
             if not source_image_path:
 
@@ -103,11 +134,100 @@ class ResolveXMLExporter:
                     f"Image file not found: {source_image_path}"
                 )
 
-            safe_image_path = self.copy_image_to_media_folder(
-                source_image_path,
-                media_folder,
-                index,
+            source_key = str(
+                source_image_path
             )
+
+            if source_key in source_to_safe:
+
+                continue
+
+            safe_index = len(
+                source_to_safe
+            )
+
+            extension = source_image_path.suffix.lower()
+
+            safe_name = (
+                f"manga_{self.letter_name(safe_index)}"
+                f"{extension}"
+            )
+
+            safe_path = media_folder / safe_name
+
+            shutil.copy2(
+                source_image_path,
+                safe_path,
+            )
+
+            source_to_safe[source_key] = safe_path
+
+            media_map_log.append(
+                {
+                    "original": str(source_image_path),
+                    "exported": str(safe_path),
+                    "original_name": source_image_path.name,
+                    "exported_name": safe_path.name,
+                }
+            )
+
+            if self.logger:
+
+                self.logger(
+                    f"Copied: {source_image_path.name} -> {safe_path.name}"
+                )
+
+        map_file = output_folder / "media_map.json"
+
+        with open(
+            map_file,
+            "w",
+            encoding="utf8",
+        ) as f:
+
+            json.dump(
+                media_map_log,
+                f,
+                indent=4,
+                ensure_ascii=False,
+            )
+
+        if self.logger:
+
+            self.logger(
+                f"Media map written: {map_file}"
+            )
+
+        return source_to_safe
+
+    # --------------------------------------------------
+    # Timeline preparation
+    # --------------------------------------------------
+
+    def prepare_video_clips(
+        self,
+        timeline,
+        source_to_safe,
+        total_frames,
+    ):
+
+        prepared = []
+
+        for index, clip in enumerate(
+            timeline
+        ):
+
+            source_image_path = Path(
+                clip["image_path"]
+            ).resolve()
+
+            source_key = str(
+                source_image_path
+            )
+
+            safe_image_path = source_to_safe[
+                source_key
+            ]
 
             start_frame = self.seconds_to_frames(
                 clip["start"]
@@ -131,7 +251,9 @@ class ResolveXMLExporter:
 
                 end_frame = start_frame + 1
 
-            duration_frames = end_frame - start_frame
+            duration_frames = (
+                end_frame - start_frame
+            )
 
             prepared.append(
                 {
@@ -141,10 +263,15 @@ class ResolveXMLExporter:
                     "start": start_frame,
                     "end": end_frame,
                     "duration": duration_frames,
+                    "original": source_image_path.name,
                 }
             )
 
         return prepared
+
+    # --------------------------------------------------
+    # Export
+    # --------------------------------------------------
 
     def export(
         self,
@@ -153,7 +280,9 @@ class ResolveXMLExporter:
         output_path,
     ):
 
-        timeline_file = Path(timeline_path)
+        timeline_file = Path(
+            timeline_path
+        )
 
         if not timeline_file.exists():
 
@@ -167,13 +296,19 @@ class ResolveXMLExporter:
             encoding="utf8",
         ) as f:
 
-            timeline = json.load(f)
+            timeline = json.load(
+                f
+            )
 
         if not timeline:
 
-            raise ValueError("Timeline is empty.")
+            raise ValueError(
+                "Timeline is empty."
+            )
 
-        audio_path = Path(audio_path).resolve()
+        audio_path = Path(
+            audio_path
+        ).resolve()
 
         if not audio_path.exists():
 
@@ -181,27 +316,37 @@ class ResolveXMLExporter:
                 f"Audio file not found: {audio_path}"
             )
 
-        output_file = Path(output_path)
+        output_file = Path(
+            output_path
+        )
 
-        output_file.parent.mkdir(
+        output_folder = output_file.parent
+
+        output_folder.mkdir(
             parents=True,
             exist_ok=True,
         )
 
-        media_folder = output_file.parent / "media"
+        media_folder = self.prepare_media_folder(
+            output_file
+        )
 
-        media_folder.mkdir(
-            parents=True,
-            exist_ok=True,
+        source_to_safe = self.build_media_map(
+            timeline,
+            media_folder,
+            output_folder,
         )
 
         total_frames = self.seconds_to_frames(
-            max(float(clip["end"]) for clip in timeline)
+            max(
+                float(clip["end"])
+                for clip in timeline
+            )
         )
 
         prepared_clips = self.prepare_video_clips(
             timeline,
-            media_folder,
+            source_to_safe,
             total_frames,
         )
 
@@ -209,13 +354,17 @@ class ResolveXMLExporter:
 
         for clip in prepared_clips:
 
-            image_path = clip["path"]
+            image_path = clip[
+                "path"
+            ]
 
             image_name = escape(
                 clip["name"]
             )
 
-            file_id = f"file-image-{clip['index']}"
+            file_id = (
+                f"file-image-{clip['index']}"
+            )
 
             video_clips_xml.append(
                 f"""
@@ -325,7 +474,9 @@ class ResolveXMLExporter:
             encoding="utf8",
         ) as f:
 
-            f.write(xml)
+            f.write(
+                xml
+            )
 
         if self.logger:
 

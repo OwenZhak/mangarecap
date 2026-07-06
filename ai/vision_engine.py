@@ -9,11 +9,11 @@ class VisionEngine:
 
         self.logger = logger
 
-        self.model = "qwen2.5vl:3b"
+        self.model = "qwen2.5vl:7b"
 
         if logger:
-            logger("Loading Qwen2.5-VL...")
-            logger("Qwen2.5-VL Ready.")
+            logger("Loading Qwen2.5-VL 7b")
+            logger("Qwen2.5-VL 7b Ready.")
 
     def describe(
         self,
