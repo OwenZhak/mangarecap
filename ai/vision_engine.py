@@ -1,4 +1,5 @@
 import json
+
 from ollama import chat
 
 
@@ -8,42 +9,51 @@ class VisionEngine:
 
         self.logger = logger
 
-        if logger:
-            logger("Loading Qwen2.5-VL...")
-
         self.model = "qwen2.5vl:3b"
 
         if logger:
+            logger("Loading Qwen2.5-VL...")
             logger("Qwen2.5-VL Ready.")
 
-    def describe(self, image_path):
+    def describe(
+        self,
+        image_path,
+        ocr_text,
+    ):
 
-        prompt = """
-You are analyzing a manga screenshot.
+        prompt = f"""
+You are analyzing ONE manga screenshot.
 
-Return ONLY valid JSON.
+OCR extracted from speech bubbles:
 
-{
-  "summary":"",
-  "characters":[],
-  "actions":[],
-  "emotion":"",
-  "location":""
-}
+{ocr_text}
 
 Rules:
 
-- Ignore speech bubbles.
-- Ignore narration boxes.
-- Ignore text.
-- Focus ONLY on the artwork.
-- Keep summary under 30 words.
+- OCR may contain mistakes.
+- Use OCR only if it agrees with the artwork.
+- Ignore speech bubbles when describing what is visible.
+- Never invent clothing, hairstyles, objects or locations.
+- If uncertain, write "unknown".
+- Report only observable facts.
+
+Return ONLY valid JSON.
+
+{{
+    "summary":"",
+    "visible_people":[],
+    "visible_actions":[],
+    "visible_objects":[],
+    "possible_event":"",
+    "location":"",
+    "emotion":"",
+    "confidence":0.0
+}}
 """
 
         response = chat(
-
             model=self.model,
-
+            format="json",
             messages=[
                 {
                     "role": "user",
@@ -51,8 +61,6 @@ Rules:
                     "images": [str(image_path)],
                 }
             ],
-
-            format="json",
         )
 
         return json.loads(

@@ -58,7 +58,8 @@ class ImageAnalyzer:
         )
 
         scene = self.vision.describe(
-            image_path
+            image_path,
+            ocr,
         )
 
         result = {
@@ -90,18 +91,47 @@ class ImageAnalyzer:
             result,
         )
 
-        self.logger("Scene")
+        self.logger("=" * 60)
 
-        self.logger(
-            scene["summary"]
-        )
+        self.logger("Scene Summary:")
+        self.logger(scene["summary"])
 
-        self.logger("OCR")
+        self.logger("")
 
+        self.logger("Possible Event:")
+        self.logger(scene["possible_event"])
+
+        self.logger("")
+
+        self.logger("People:")
+        for person in scene["visible_people"]:
+            self.logger(f" - {person}")
+
+        self.logger("")
+
+        self.logger("Actions:")
+        for action in scene["visible_actions"]:
+            self.logger(f" - {action}")
+
+        self.logger("")
+
+        self.logger("Objects:")
+        for obj in scene["visible_objects"]:
+            self.logger(f" - {obj}")
+
+        self.logger("")
+
+        self.logger(f"Location: {scene['location']}")
+        self.logger(f"Emotion: {scene['emotion']}")
+        self.logger(f"Confidence: {scene['confidence']}")
+
+        self.logger("")
+
+        self.logger("OCR:")
         self.logger(ocr)
 
-        self.logger(
-            "Saved to cache."
-        )
+        self.logger("=" * 60)
+
+        self.logger("Saved to cache.")
 
         return result

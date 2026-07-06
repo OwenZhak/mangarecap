@@ -4,6 +4,8 @@ from PySide6.QtCore import QObject, Signal, Slot
 
 from ai.whisper_engine import WhisperEngine
 from ai.image_analyzer import ImageAnalyzer
+from timeline.timeline_builder import TimelineBuilder
+from timeline.segment import Segment
 
 
 class Worker(QObject):
@@ -27,30 +29,44 @@ class Worker(QObject):
 
         try:
 
-            # ----------------------------
+            # ----------------------------------------
             # Whisper
-            # ----------------------------
+            # ----------------------------------------
 
             self.status.emit("Transcribing audio...")
 
             whisper = WhisperEngine()
 
-            transcript = whisper.transcribe(
+            transcript_data = whisper.transcribe(
                 self.audio,
                 None,
                 self.log.emit,
             )
 
             whisper.save_json(
-                transcript,
+                transcript_data,
                 "cache/transcript.json",
             )
 
-            # ----------------------------
-            # Images
-            # ----------------------------
+            transcript = []
 
-            self.status.emit("Preparing image analysis...")
+            for item in transcript_data:
+
+                transcript.append(
+
+                    Segment(
+                        start=item["start"],
+                        end=item["end"],
+                        text=item["text"],
+                    )
+
+                )
+
+            # ----------------------------------------
+            # Images
+            # ----------------------------------------
+
+            self.status.emit("Preparing images...")
 
             self.log.emit("--------------------------------")
             self.log.emit("Scanning image folder...")
@@ -63,73 +79,102 @@ class Worker(QObject):
                 ".webp",
             }
 
-            images = []
+            images = sorted(
 
-            for file in Path(self.images).iterdir():
+                [
+                    file
+                    for file in Path(self.images).iterdir()
+                    if file.suffix.lower()
+                    in image_extensions
+                ],
 
-                if file.suffix.lower() in image_extensions:
+                key=lambda x: x.name.lower(),
 
-                    images.append(file)
+            )
 
             self.log.emit(
                 f"Found {len(images)} images."
             )
 
             self.log.emit("")
-            self.log.emit("Initializing AI models...")
+            self.log.emit("Initializing AI...")
 
             analyzer = ImageAnalyzer(
                 logger=self.log.emit
             )
 
-            self.log.emit("")
-            self.log.emit("All AI models loaded.")
-            self.log.emit("--------------------------------")
-
-            image_extensions = {
-                ".png",
-                ".jpg",
-                ".jpeg",
-                ".webp",
-            }
-
-            images = []
-
-            for file in Path(self.images).iterdir():
-
-                if file.suffix.lower() in image_extensions:
-
-                    images.append(file)
+            analyzed = []
 
             total = len(images)
 
             for index, image in enumerate(images):
 
                 self.status.emit(
-                    f"Analyzing {index+1}/{len(images)}"
+                    f"Analyzing {index+1}/{total}"
                 )
 
                 self.log.emit("")
-                self.log.emit(
-                    "=" * 60
-                )
+                self.log.emit("=" * 70)
 
                 self.log.emit(
-                    f"Image {index+1} / {len(images)}"
+                    f"Image {index+1}/{total}"
                 )
 
-                analyzer.analyze(image)
+                analyzed.append(
 
-                progress = int(
-                    ((index + 1) / len(images)) * 100
+                    analyzer.analyze(image)
+
                 )
 
-                self.progress.emit(progress)
+                self.progress.emit(
 
-            self.status.emit("Finished")
+                    int(
+
+                        ((index + 1) / total)
+
+                        * 70
+
+                    )
+
+                )
+
+            # ----------------------------------------
+            # Timeline
+            # ----------------------------------------
+
+            self.log.emit("")
+            self.log.emit("=" * 70)
+            self.log.emit("Building Timeline")
+            self.log.emit("=" * 70)
+
+            builder = TimelineBuilder(
+
+                logger=self.log.emit
+
+            )
+
+            builder.build(
+
+                transcript,
+
+                analyzed,
+
+            )
+
+            self.progress.emit(100)
+
+            self.status.emit(
+
+                "Finished"
+
+            )
 
             self.finished.emit()
 
         except Exception as e:
 
-            self.error.emit(str(e))
+            self.error.emit(
+
+                str(e)
+
+            )
