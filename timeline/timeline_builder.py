@@ -24,7 +24,11 @@ class TimelineBuilder:
 
         current = 0
 
-        Path("output").mkdir(exist_ok=True)
+        output_folder = Path("output")
+
+        output_folder.mkdir(
+            exist_ok=True
+        )
 
         for segment in transcript:
 
@@ -42,10 +46,12 @@ class TimelineBuilder:
 
             current = chosen
 
+            selected_image = images[chosen]
+
             if self.logger:
 
                 self.logger(
-                    f"Chosen: {images[chosen]['file']} ({score:.3f})"
+                    f"Chosen: {selected_image['file']} ({score:.3f})"
                 )
 
             timeline.append(
@@ -53,13 +59,14 @@ class TimelineBuilder:
                     "start": segment.start,
                     "end": segment.end,
                     "text": segment.text,
-                    "image": images[chosen]["file"],
+                    "image": selected_image["file"],
+                    "image_path": selected_image["path"],
                     "score": round(score, 4),
                 }
             )
 
         with open(
-            "output/timeline.json",
+            output_folder / "timeline.json",
             "w",
             encoding="utf8",
         ) as f:

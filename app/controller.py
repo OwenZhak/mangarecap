@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from typing import Optional
 
@@ -11,13 +12,6 @@ from app.worker import Worker
 
 
 class Controller(QObject):
-    """
-    Main application controller.
-
-    The UI should ONLY communicate with this class.
-    Everything else (AI, timeline, exporting) will be
-    coordinated from here.
-    """
 
     def __init__(self):
         super().__init__()
@@ -83,6 +77,61 @@ class Controller(QObject):
             errors.append("Output folder doesn't exist.")
 
         return errors
+
+    # --------------------------------------------------
+    # Clear Output
+    # --------------------------------------------------
+
+    def clear_output_project(self):
+
+        output_folder = Path("output")
+
+        output_folder.mkdir(
+            exist_ok=True
+        )
+
+        targets = [
+            output_folder / "project.xml",
+            output_folder / "project.fcpxml",
+            output_folder / "timeline.json",
+            output_folder / "timeline_raw.json",
+            output_folder / "media",
+        ]
+
+        messages = []
+
+        for target in targets:
+
+            if not target.exists():
+                continue
+
+            if target.is_dir():
+
+                shutil.rmtree(target)
+
+                messages.append(
+                    f"Deleted folder: {target}"
+                )
+
+            else:
+
+                target.unlink()
+
+                messages.append(
+                    f"Deleted file: {target}"
+                )
+
+        if not messages:
+
+            messages.append(
+                "No previous output project found."
+            )
+
+        messages.append(
+            "Cache was not deleted."
+        )
+
+        return messages
 
     # --------------------------------------------------
     # Worker
