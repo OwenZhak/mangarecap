@@ -50,9 +50,41 @@ class Worker(QObject):
             # Images
             # ----------------------------
 
-            self.status.emit("Analyzing images...")
+            self.status.emit("Preparing image analysis...")
 
-            analyzer = ImageAnalyzer()
+            self.log.emit("--------------------------------")
+            self.log.emit("Scanning image folder...")
+            self.log.emit("")
+
+            image_extensions = {
+                ".png",
+                ".jpg",
+                ".jpeg",
+                ".webp",
+            }
+
+            images = []
+
+            for file in Path(self.images).iterdir():
+
+                if file.suffix.lower() in image_extensions:
+
+                    images.append(file)
+
+            self.log.emit(
+                f"Found {len(images)} images."
+            )
+
+            self.log.emit("")
+            self.log.emit("Initializing AI models...")
+
+            analyzer = ImageAnalyzer(
+                logger=self.log.emit
+            )
+
+            self.log.emit("")
+            self.log.emit("All AI models loaded.")
+            self.log.emit("--------------------------------")
 
             image_extensions = {
                 ".png",
@@ -73,17 +105,26 @@ class Worker(QObject):
 
             for index, image in enumerate(images):
 
+                self.status.emit(
+                    f"Analyzing {index+1}/{len(images)}"
+                )
+
+                self.log.emit("")
+                self.log.emit(
+                    "=" * 60
+                )
+
+                self.log.emit(
+                    f"Image {index+1} / {len(images)}"
+                )
+
                 analyzer.analyze(image)
 
                 progress = int(
-                    ((index + 1) / total) * 100
+                    ((index + 1) / len(images)) * 100
                 )
 
                 self.progress.emit(progress)
-
-                self.log.emit(
-                    f"Analyzed {image.name}"
-                )
 
             self.status.emit("Finished")
 
