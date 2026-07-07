@@ -13,7 +13,7 @@ class OCRJudge:
 
         self.logger = logger
 
-        self.model = "qwen2.5:7b"
+        self.model = "qwen2.5:14b"
 
     def extract_json(
         self,

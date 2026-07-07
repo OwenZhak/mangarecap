@@ -16,7 +16,7 @@ class SceneJudge:
         # Text-only model.
         # Use qwen2.5:7b if you installed it.
         # If you use qwen3:8b, change this line.
-        self.model = "qwen2.5:7b"
+        self.model = "qwen2.5:14b"
 
     def extract_json(
         self,

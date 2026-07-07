@@ -1,4 +1,4 @@
-from pathlib import Path
+import torch
 
 from PIL import Image
 
@@ -10,8 +10,15 @@ class EmbeddingEngine:
 
     def __init__(self):
 
+        self.device = (
+            "cuda"
+            if torch.cuda.is_available()
+            else "cpu"
+        )
+
         self.model = SentenceTransformer(
-            "clip-ViT-B-32"
+            "clip-ViT-B-32",
+            device=self.device,
         )
 
     def image_embedding(
@@ -24,6 +31,7 @@ class EmbeddingEngine:
         return self.model.encode(
             image,
             convert_to_tensor=True,
+            device=self.device,
         )
 
     def text_embedding(
@@ -34,6 +42,7 @@ class EmbeddingEngine:
         return self.model.encode(
             text,
             convert_to_tensor=True,
+            device=self.device,
         )
 
     def similarity(

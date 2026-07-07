@@ -1,6 +1,7 @@
 import re
 from difflib import SequenceMatcher
 
+import torch
 from sentence_transformers import SentenceTransformer
 from sentence_transformers.util import cos_sim
 
@@ -17,8 +18,21 @@ class TimelineMatcher:
 
         self.logger = logger
 
+        self.device = (
+            "cuda"
+            if torch.cuda.is_available()
+            else "cpu"
+        )
+
+        if self.logger:
+
+            self.logger(
+                f"Timeline matcher device: {self.device}"
+            )
+
         self.model = SentenceTransformer(
-            "all-MiniLM-L6-v2"
+            "all-MiniLM-L6-v2",
+            device=self.device,
         )
 
         self.window_forward = 3
@@ -390,11 +404,13 @@ class TimelineMatcher:
         context_embeddings = self.model.encode(
             contexts,
             convert_to_tensor=True,
+            device=self.device,
         )
 
         image_embeddings = self.model.encode(
             image_texts,
             convert_to_tensor=True,
+            device=self.device,
         )
 
         semantic_matrix = cos_sim(

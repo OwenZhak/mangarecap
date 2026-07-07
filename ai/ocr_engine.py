@@ -7,7 +7,7 @@ class OCREngine:
 
         self.reader = easyocr.Reader(
             ["en", "ja"],
-            gpu=False,
+            gpu=True,
         )
 
     def extract_text(self, image_path):
