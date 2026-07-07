@@ -5,6 +5,7 @@ from sentence_transformers import SentenceTransformer
 from sentence_transformers.util import cos_sim
 
 from ai.ocr_judge import OCRJudge
+from ai.scene_judge import SceneJudge
 
 
 class TimelineMatcher:
@@ -20,13 +21,15 @@ class TimelineMatcher:
             "all-MiniLM-L6-v2"
         )
 
-        # Check current image + next 3 images.
-        # Never go backward.
         self.window_forward = 3
 
         self.used_counts = {}
 
         self.ocr_judge = OCRJudge(
+            logger=logger
+        )
+
+        self.scene_judge = SceneJudge(
             logger=logger
         )
 
@@ -198,15 +201,24 @@ class TimelineMatcher:
     # Image text
     # --------------------------------------------------
 
+    def image_scene(
+        self,
+        image,
+    ):
+
+        return image.get(
+            "scene",
+            {},
+        ) or {}
+
     def image_text(
         self,
         image,
     ):
 
-        scene = image.get(
-            "scene",
-            {},
-        ) or {}
+        scene = self.image_scene(
+            image
+        )
 
         parts = [
             image.get("ocr", ""),
@@ -314,6 +326,13 @@ class TimelineMatcher:
             "help",
             "understood",
             "situation",
+            "home",
+            "return",
+            "returned",
+            "building",
+            "house",
+            "apartment",
+            "entrance",
         }
 
         important_overlap = overlap.intersection(
@@ -532,6 +551,110 @@ class TimelineMatcher:
         }
 
     # --------------------------------------------------
+    # Scene judge
+    # --------------------------------------------------
+
+    def apply_scene_judge(
+        self,
+        segment_text,
+        context_text,
+        images,
+        candidate_indices,
+        scores,
+        segment_index,
+    ):
+
+        candidates = []
+
+        number_to_image_index = {}
+
+        for number, image_index in enumerate(
+            candidate_indices,
+            start=1,
+        ):
+
+            image = images[image_index]
+
+            scene = self.image_scene(
+                image
+            )
+
+            candidates.append(
+                {
+                    "number": number,
+                    "ocr": image.get("ocr", ""),
+                    "summary": self.as_text(
+                        scene.get("summary", "")
+                    ),
+                    "possible_event": self.as_text(
+                        scene.get("possible_event", "")
+                    ),
+                    "location": self.as_text(
+                        scene.get("location", "")
+                    ),
+                    "actions": self.as_text(
+                        scene.get("visible_actions", [])
+                    ),
+                    "objects": self.as_text(
+                        scene.get("visible_objects", [])
+                    ),
+                    "emotion": self.as_text(
+                        scene.get("emotion", "")
+                    ),
+                }
+            )
+
+            number_to_image_index[number] = image_index
+
+        result = self.scene_judge.judge(
+            segment_text,
+            context_text,
+            candidates,
+        )
+
+        if not result:
+
+            return None
+
+        confidence = result.get(
+            "confidence",
+            0.0,
+        )
+
+        if confidence < 0.55:
+
+            return None
+
+        best_number = result.get(
+            "best_candidate",
+            0,
+        )
+
+        chosen_image_index = number_to_image_index.get(
+            best_number
+        )
+
+        if chosen_image_index is None:
+
+            return None
+
+        detail = scores[
+            segment_index
+        ][
+            chosen_image_index
+        ]
+
+        return {
+            "image_index": chosen_image_index,
+            "confidence": confidence,
+            "detail": detail,
+            "reason": result.get(
+                "reason",
+                "",
+            ),
+        }
+
+    # --------------------------------------------------
     # Movement rules
     # --------------------------------------------------
 
@@ -549,7 +672,6 @@ class TimelineMatcher:
 
         threshold = 0.18
 
-        # Do not jump too fast.
         if distance == 2:
 
             threshold += 0.14
@@ -558,8 +680,6 @@ class TimelineMatcher:
 
             threshold += 0.30
 
-        # If current image still matches OCR,
-        # keep it longer.
         if current_ocr >= 0.60:
 
             threshold += 0.22
@@ -572,8 +692,6 @@ class TimelineMatcher:
 
             threshold += 0.07
 
-        # If candidate OCR is clearly strong,
-        # allow moving.
         if candidate_ocr >= 0.75:
 
             threshold -= 0.24
@@ -586,8 +704,6 @@ class TimelineMatcher:
 
             threshold -= 0.08
 
-        # If current image has been held too long
-        # and no longer matches, move easier.
         if current_used_count >= 3 and current_ocr < 0.30:
 
             threshold -= 0.08
@@ -596,8 +712,6 @@ class TimelineMatcher:
 
             threshold -= 0.10
 
-        # If we are far behind expected image,
-        # allow movement, but only if current OCR is weak.
         progress = segment_index / max(
             1,
             total_segments - 1,
@@ -699,7 +813,16 @@ class TimelineMatcher:
             )
         )
 
-        judge_result = self.apply_ocr_judge(
+        ocr_judge_result = self.apply_ocr_judge(
+            transcript[segment_index].text,
+            contexts[segment_index],
+            images,
+            candidate_indices,
+            scores,
+            segment_index,
+        )
+
+        scene_judge_result = self.apply_scene_judge(
             transcript[segment_index].text,
             contexts[segment_index],
             images,
@@ -761,20 +884,20 @@ class TimelineMatcher:
                 best_detail = detail
 
         # --------------------------------------------------
-        # Smart OCR judge override / boost
+        # OCR judge boost
         # --------------------------------------------------
 
-        if judge_result:
+        if ocr_judge_result:
 
-            judge_image_index = judge_result[
+            judge_image_index = ocr_judge_result[
                 "image_index"
             ]
 
-            judge_confidence = judge_result[
+            judge_confidence = ocr_judge_result[
                 "confidence"
             ]
 
-            judge_detail = judge_result[
+            judge_detail = ocr_judge_result[
                 "detail"
             ]
 
@@ -785,7 +908,6 @@ class TimelineMatcher:
                     f"with confidence {judge_confidence:.2f}"
                 )
 
-            # Never go backward.
             if judge_image_index >= current_image_index:
 
                 judge_distance = (
@@ -793,8 +915,6 @@ class TimelineMatcher:
                     - current_image_index
                 )
 
-                # Very high confidence can override,
-                # but still respects forward-only.
                 if judge_confidence >= 0.78:
 
                     best_index = judge_image_index
@@ -833,6 +953,82 @@ class TimelineMatcher:
 
                             self.logger(
                                 "Decision: OCR judge medium boost."
+                            )
+
+        # --------------------------------------------------
+        # Scene judge boost
+        # --------------------------------------------------
+
+        if scene_judge_result:
+
+            scene_image_index = scene_judge_result[
+                "image_index"
+            ]
+
+            scene_confidence = scene_judge_result[
+                "confidence"
+            ]
+
+            scene_detail = scene_judge_result[
+                "detail"
+            ]
+
+            if self.logger:
+
+                self.logger(
+                    f"Scene judge wants image {scene_image_index + 1} "
+                    f"with confidence {scene_confidence:.2f}"
+                )
+
+            if scene_image_index >= current_image_index:
+
+                scene_distance = (
+                    scene_image_index
+                    - current_image_index
+                )
+
+                if scene_confidence >= 0.78:
+
+                    scene_score = (
+                        scene_detail["score"]
+                        + 0.45
+                        - 0.05 * scene_distance
+                    )
+
+                    if scene_score > best_score:
+
+                        best_index = scene_image_index
+
+                        best_detail = scene_detail
+
+                        best_score = scene_score
+
+                        if self.logger:
+
+                            self.logger(
+                                "Decision: Scene judge strong override."
+                            )
+
+                elif scene_confidence >= 0.65:
+
+                    scene_score = (
+                        scene_detail["score"]
+                        + 0.22
+                        - 0.04 * scene_distance
+                    )
+
+                    if scene_score > best_score:
+
+                        best_index = scene_image_index
+
+                        best_detail = scene_detail
+
+                        best_score = scene_score
+
+                        if self.logger:
+
+                            self.logger(
+                                "Decision: Scene judge medium boost."
                             )
 
         # --------------------------------------------------
