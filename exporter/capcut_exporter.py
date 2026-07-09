@@ -109,7 +109,6 @@ class CapCutExporter:
 
                 pass
 
-        # Try ffprobe for mp3, m4a, wav, etc.
         try:
 
             result = subprocess.run(
@@ -261,7 +260,94 @@ class CapCutExporter:
 
         return media_folder
 
-    def copy_media(
+    def copy_media_from_timeline(
+        self,
+        audio_path,
+        timeline,
+        project_folder,
+    ):
+
+        media_folder = self.prepare_media_folder(
+            project_folder
+        )
+
+        source_to_copied = {}
+
+        copied_timeline = []
+
+        for index, item in enumerate(
+            timeline,
+            start=1,
+        ):
+
+            source_image = Path(
+                item["image_path"]
+            ).resolve()
+
+            if not source_image.exists():
+
+                raise FileNotFoundError(
+                    f"Timeline image not found: {source_image}"
+                )
+
+            source_key = str(
+                source_image
+            )
+
+            if source_key not in source_to_copied:
+
+                extension = source_image.suffix.lower()
+
+                new_name = f"image_{len(source_to_copied) + 1:04d}{extension}"
+
+                new_path = media_folder / new_name
+
+                shutil.copy2(
+                    source_image,
+                    new_path,
+                )
+
+                source_to_copied[source_key] = new_path
+
+            copied_item = dict(
+                item
+            )
+
+            copied_item["image_path"] = str(
+                source_to_copied[source_key]
+            )
+
+            copied_timeline.append(
+                copied_item
+            )
+
+        audio_path = Path(
+            audio_path
+        ).resolve()
+
+        audio_extension = audio_path.suffix.lower()
+
+        copied_audio = (
+            media_folder
+            / f"voiceover{audio_extension}"
+        )
+
+        shutil.copy2(
+            audio_path,
+            copied_audio,
+        )
+
+        self.log(
+            f"Copied {len(source_to_copied)} unique timeline images."
+        )
+
+        self.log(
+            f"Copied audio: {copied_audio.name}"
+        )
+
+        return copied_audio, copied_timeline
+
+    def copy_media_simple(
         self,
         audio_path,
         image_paths,
@@ -724,10 +810,143 @@ class CapCutExporter:
         return segment
 
     # --------------------------------------------------
-    # Replace timeline
+    # Timeline replacement
     # --------------------------------------------------
 
-    def replace_timeline(
+    def replace_with_timeline(
+        self,
+        data,
+        audio_path,
+        timeline,
+        audio_duration_seconds,
+    ):
+
+        parts = self.get_template_parts(
+            data
+        )
+
+        materials = self.ensure_materials(
+            data
+        )
+
+        project_duration_us = self.seconds_to_microseconds(
+            audio_duration_seconds
+        )
+
+        new_video_materials = []
+
+        video_segments = []
+
+        for index, item in enumerate(
+            timeline
+        ):
+
+            image_path = Path(
+                item["image_path"]
+            ).resolve()
+
+            start_us = self.seconds_to_microseconds(
+                item["start"]
+            )
+
+            if index + 1 < len(timeline):
+
+                end_time = float(
+                    timeline[index + 1]["start"]
+                )
+
+            else:
+
+                end_time = float(
+                    item["end"]
+                )
+
+            duration_us = self.seconds_to_microseconds(
+                end_time - float(item["start"])
+            )
+
+            if duration_us <= 0:
+
+                duration_us = 100000
+
+            material_id, material = self.make_video_material_from_template(
+                parts["video_material"],
+                image_path,
+                duration_us,
+            )
+
+            new_video_materials.append(
+                material
+            )
+
+            segment = self.make_segment_from_template(
+                parts["video_segment"],
+                material_id,
+                start_us,
+                duration_us,
+            )
+
+            video_segments.append(
+                segment
+            )
+
+        audio_material_id, audio_material = self.make_audio_material_from_template(
+            parts["audio_material"],
+            audio_path,
+            project_duration_us,
+        )
+
+        audio_segment = self.make_segment_from_template(
+            parts["audio_segment"],
+            audio_material_id,
+            0,
+            project_duration_us,
+        )
+
+        new_video_track = copy.deepcopy(
+            parts["video_track"]
+        )
+
+        new_audio_track = copy.deepcopy(
+            parts["audio_track"]
+        )
+
+        new_video_track["id"] = self.make_id()
+
+        new_audio_track["id"] = self.make_id()
+
+        new_video_track["segments"] = video_segments
+
+        new_audio_track["segments"] = [
+            audio_segment
+        ]
+
+        materials["videos"] = new_video_materials
+
+        materials["audios"] = [
+            audio_material
+        ]
+
+        data["tracks"] = [
+            new_video_track,
+            new_audio_track,
+        ]
+
+        data["duration"] = project_duration_us
+
+        if "canvas_config" not in data:
+
+            data["canvas_config"] = {}
+
+        data["canvas_config"]["ratio"] = "9:16"
+
+        data["canvas_config"]["width"] = self.width
+
+        data["canvas_config"]["height"] = self.height
+
+        return data
+
+    def replace_simple_ordered(
         self,
         data,
         audio_path,
@@ -753,10 +972,6 @@ class CapCutExporter:
                 len(image_paths),
             )
         )
-
-        # ----------------------------------------
-        # Build video materials and segments
-        # ----------------------------------------
 
         new_video_materials = []
 
@@ -802,10 +1017,6 @@ class CapCutExporter:
 
             current_start += clip_duration
 
-        # ----------------------------------------
-        # Build audio material and segment
-        # ----------------------------------------
-
         audio_material_id, audio_material = self.make_audio_material_from_template(
             parts["audio_material"],
             audio_path,
@@ -818,10 +1029,6 @@ class CapCutExporter:
             0,
             duration_us,
         )
-
-        # ----------------------------------------
-        # Build tracks using real template tracks
-        # ----------------------------------------
 
         new_video_track = copy.deepcopy(
             parts["video_track"]
@@ -867,8 +1074,86 @@ class CapCutExporter:
         return data
 
     # --------------------------------------------------
-    # Public export
+    # Public export methods
     # --------------------------------------------------
+
+    def export_from_timeline(
+        self,
+        audio_path,
+        timeline_path,
+    ):
+
+        timeline_file = Path(
+            timeline_path
+        )
+
+        if not timeline_file.exists():
+
+            raise FileNotFoundError(
+                f"Timeline file not found: {timeline_path}"
+            )
+
+        with open(
+            timeline_file,
+            "r",
+            encoding="utf8",
+        ) as f:
+
+            timeline = json.load(
+                f
+            )
+
+        if not timeline:
+
+            raise ValueError(
+                "Timeline is empty."
+            )
+
+        output_name = self.safe_project_name()
+
+        project_folder = self.copy_template_project(
+            output_name
+        )
+
+        copied_audio, copied_timeline = self.copy_media_from_timeline(
+            audio_path,
+            timeline,
+            project_folder,
+        )
+
+        audio_duration = self.audio_duration_seconds(
+            copied_audio
+        )
+
+        self.log(
+            f"Audio duration: {audio_duration:.2f}s"
+        )
+
+        draft_file, data = self.load_draft(
+            project_folder
+        )
+
+        data = self.replace_with_timeline(
+            data,
+            copied_audio,
+            copied_timeline,
+            audio_duration,
+        )
+
+        self.save_draft(
+            draft_file,
+            data,
+        )
+
+        self.log(
+            "CapCut draft_content.json updated from matched timeline."
+        )
+
+        self.log(
+            f"Open this project in CapCut: {output_name}"
+        )
+
+        return project_folder
 
     def export(
         self,
@@ -888,7 +1173,7 @@ class CapCutExporter:
             output_name
         )
 
-        copied_audio, copied_images = self.copy_media(
+        copied_audio, copied_images = self.copy_media_simple(
             audio_path,
             image_paths,
             project_folder,
@@ -906,7 +1191,7 @@ class CapCutExporter:
             project_folder
         )
 
-        data = self.replace_timeline(
+        data = self.replace_simple_ordered(
             data,
             copied_audio,
             copied_images,
